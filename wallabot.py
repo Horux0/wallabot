@@ -1,23 +1,14 @@
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import requests
+from bs4 import BeautifulSoup
+from telegram import Bot
 import time
 
 # === TUS DATOS DE TELEGRAM ===
-TOKEN = '7783933019:AAGUwhd2GpV3GnvR3NNPD6DtEkFYQG6wORY'
+TOKEN = '7783933019:AAGUwhd2GpV3GnvR3NNPD6tEkFYQ6GWoRY'
 CHAT_ID = '355095466'
+bot = Bot(token=TOKEN)
 
-def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {'chat_id': CHAT_ID, 'text': mensaje}
-    requests.post(url, data=payload)
-
-enviados = set()
-
-# === Lista de palabras clave (masculino + femenino + variantes)
+# === PALABRAS CLAVE ===
 palabras_clave = [
     "averiado", "averiada",
     "no funciona", "no enciende", "no arranca", "no carga", "no va",
@@ -29,38 +20,42 @@ palabras_clave = [
     "sin funcionar"
 ]
 
+# === ENLACES YA ENVIADOS ===
+enviados = set()
+
+# === FUNCIÓN DE BÚSQUEDA ===
 def buscar_wallapop():
-    options = Options()
-    options.headless = True
-    driver = webdriver.Firefox(options=options)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    nuevos = []
 
     for palabra in palabras_clave:
-        url = f"https://es.wallapop.com/app/search?keywords={palabra}"
-        print(f"🔎 Buscando: {palabra}")
-        driver.get(url)
+        url = f"https://es.wallapop.com/app/search?keywords={palabra.replace(' ', '%20')}"
+        res = requests.get(url, headers=headers)
 
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '/item/')]"))
-            )
-            enlaces = driver.find_elements(By.XPATH, "//a[contains(@href, '/item/')]")
-            nuevos = 0
-            for e in enlaces:
-                link = e.get_attribute("href")
-                if link and link not in enviados:
-                    enviados.add(link)
-                    print(f"Nuevo → {link}")
-                    enviar_telegram(f"📦 Producto ({palabra}):\n{link}")
-                    nuevos += 1
-            if nuevos == 0:
-                print("Sin novedades.\n")
-        except:
-            print(f"❌ No se encontraron resultados para: {palabra}\n")
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            links = soup.find_all('a', href=True)
 
-    driver.quit()
+            for a in links:
+                href = a['href']
+                if "/item/" in href:
+                    link = f"https://es.wallapop.com{href}" if href.startswith("/") else href
+                    if link not in enviados:
+                        nuevos.append(link)
+                        enviados.add(link)
 
-# 🔁 Ejecutar cada 15 minutos (900 segundos)
+    return nuevos
+
+# === BUCLE PRINCIPAL ===
 while True:
-    buscar_wallapop()
-    print("🕒 Esperando 15 minutos para la próxima búsqueda...\n")
-    time.sleep(900)
+    print("Buscando productos...")
+    encontrados = buscar_wallapop()
+
+    if encontrados:
+        for link in encontrados:
+            bot.send_message(chat_id=CHAT_ID, text=f"🛠 Producto averiado encontrado:\n{link}")
+            print(f"Enviado: {link}")
+    else:
+        print("Sin novedades.")
+
+    time.sleep(600)  # Espera 10 minutos
